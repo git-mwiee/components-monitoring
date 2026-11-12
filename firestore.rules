@@ -31,6 +31,7 @@ service cloud.firestore {
         && request.resource.data.action is string
         && request.resource.data.action in [
           'login',
+          'signup',
           'logout',
           'activity_view',
           'activity_refresh',
