@@ -7,8 +7,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return signedIn()
-        && request.auth.token.email_verified == true
-        && request.auth.token.email == 'rabanalmaraa@gmail.com';
+        && request.auth.uid == 'p82fI4PrieTw7SdFe2PX8A3xmnG3';
     }
 
     match /monitoring/{documentId} {
@@ -32,7 +31,7 @@ service cloud.firestore {
     }
 
     match /activity_logs/{activityId} {
-      allow read: if signedIn();
+      allow read: if isAdmin();
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['uid', 'email', 'action', 'details', 'createdAt'])
         && request.resource.data.keys().hasAll(['uid', 'email', 'action', 'details', 'createdAt'])
