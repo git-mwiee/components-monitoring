@@ -72,6 +72,7 @@
         <div id="uploadAccessNotice" class="hidden mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <p id="uploadAccessMessage">You can view feeds. Data uploads are restricted to administrators.</p>
             <button id="resendVerificationBtn" class="hidden mt-2 font-semibold underline">Resend admin verification email</button>
+            <button id="refreshAdminAccessBtn" class="hidden mt-2 font-semibold underline">I verified my email — refresh admin access</button>
         </div>
 
         <!-- Banner -->
@@ -150,7 +151,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, signOut, onAuthStateChanged }
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, reload, signOut, onAuthStateChanged }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
         import { getFirestore, doc, collection, onSnapshot, getDoc, getDocs, query, where, writeBatch }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
@@ -298,7 +299,7 @@
                     if (isAdminEmail(email)) {
                         try {
                             await sendEmailVerification(credential.user);
-                            showBanner("Account created. Verify your email, then sign out and back in to enable admin uploads.", "bg-amber-100 text-amber-800 border border-amber-300");
+                            showBanner("Account created. Verify your email, then refresh admin access to enable uploads.", "bg-amber-100 text-amber-800 border border-amber-300");
                         } catch (verificationError) {
                             console.error("Could not send admin verification email.", verificationError);
                             showBanner("Account created, but the verification email could not be sent. Sign in and use the resend option.", "bg-rose-100 text-rose-800 border border-rose-300");
@@ -343,13 +344,45 @@
         $('resendVerificationBtn').onclick = async () => {
             try {
                 await sendEmailVerification(auth.currentUser);
-                $('uploadAccessMessage').textContent = "Verification email sent. Verify your email, then sign out and back in to enable admin uploads.";
-                $('resendVerificationBtn').classList.add('hidden');
+                $('uploadAccessMessage').textContent = "Verification email sent. Open it, verify your address, then select “I verified my email — refresh admin access.”";
+                showBanner("Admin verification email sent.", "bg-blue-100 text-blue-800 border border-blue-300");
             } catch (error) {
                 console.error("Could not send admin verification email.", error);
                 showBanner("Could not send verification email. Please try again later.", "bg-rose-100 text-rose-800 border border-rose-300");
             }
         };
+
+        $('refreshAdminAccessBtn').onclick = async () => {
+            try {
+                $('refreshAdminAccessBtn').disabled = true;
+                await reload(auth.currentUser);
+                await auth.currentUser.getIdToken(true);
+                updateRoleUI(auth.currentUser);
+                showBanner(isAdminUser(auth.currentUser)
+                    ? "Admin access enabled. You can now upload feed data."
+                    : "Email not verified yet. Open the verification link in your inbox, then try again.",
+                isAdminUser(auth.currentUser)
+                    ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                    : "bg-amber-100 text-amber-800 border border-amber-300");
+            } catch (error) {
+                console.error("Could not refresh admin access.", error);
+                showBanner("Could not refresh admin access. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            } finally {
+                $('refreshAdminAccessBtn').disabled = false;
+            }
+        };
+
+        function updateRoleUI(user) {
+            const admin = isAdminUser(user);
+            $('uploadSection').classList.toggle('hidden', !admin);
+            $('uploadAccessNotice').classList.toggle('hidden', admin);
+            $('uploadAccessMessage').textContent = isAdminEmail(user.email) && !user.emailVerified
+                ? "This is the admin account, but its email is not verified yet. Verify it and refresh admin access."
+                : "You can view feeds. Data uploads are restricted to administrators.";
+            $('resendVerificationBtn').classList.toggle('hidden', !isAdminEmail(user.email) || user.emailVerified);
+            $('refreshAdminAccessBtn').classList.toggle('hidden', !isAdminEmail(user.email));
+            $('signedInUser').textContent = `${user.email || 'user'} (${admin ? 'Admin' : isAdminEmail(user.email) ? 'Admin — verification required' : 'Viewer'})`;
+        }
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
@@ -361,18 +394,11 @@
                 activeUserId = user.uid;
                 $('authGate').classList.add('hidden');
                 $('authenticatedApp').classList.remove('hidden');
-                const admin = isAdminUser(user);
-                $('uploadSection').classList.toggle('hidden', !admin);
-                $('uploadAccessNotice').classList.toggle('hidden', admin);
-                $('uploadAccessMessage').textContent = isAdminEmail(user.email) && !user.emailVerified
-                    ? "Verify your admin email to upload data. After verifying, sign out and sign back in."
-                    : "You can view feeds. Data uploads are restricted to administrators.";
-                $('resendVerificationBtn').classList.toggle('hidden', !isAdminEmail(user.email) || user.emailVerified);
+                updateRoleUI(user);
                 $('adminToggleBtn').classList.add('hidden');
-                $('signedInUser').textContent = `${user.email || 'user'} (${admin ? 'Admin' : 'Viewer'})`;
                 $('signedInUser').classList.remove('hidden');
                 $('logoutBtn').classList.remove('hidden');
-                showBanner(admin ? "Signed in as admin. Data uploads are enabled." : "Signed in with view-only access.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+                showBanner(isAdminUser(user) ? "Signed in as admin. Data uploads are enabled." : "Signed in with view-only access.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
                 trackActivity('login', { page: 'receiving' });
                 trackActivity('feed_access', { feed: 'receiving' });
                 startReceivingListener();
@@ -385,6 +411,8 @@
                 $('authGate').classList.remove('hidden');
                 $('uploadSection').classList.add('hidden');
                 $('uploadAccessNotice').classList.add('hidden');
+                $('resendVerificationBtn').classList.add('hidden');
+                $('refreshAdminAccessBtn').classList.add('hidden');
                 $('adminToggleBtn').classList.remove('hidden');
                 $('signedInUser').classList.add('hidden');
                 $('logoutBtn').classList.add('hidden');
