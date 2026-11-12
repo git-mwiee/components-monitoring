@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /monitoring/{documentId} {
+      allow read, write: if signedIn();
+    }
+
+    match /chunks/{documentId} {
+      allow read, write: if signedIn();
+    }
+
+    match /receiving/{documentId} {
+      allow read, write: if signedIn();
+    }
+
+    match /receiving_chunks/{documentId} {
+      allow read, write: if signedIn();
+    }
+
+    match /activity_logs/{activityId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'email', 'action', 'details', 'createdAt'])
+        && request.resource.data.keys().hasAll(['uid', 'email', 'action', 'details', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.action is string
+        && request.resource.data.action in [
+          'login',
+          'logout',
+          'activity_view',
+          'activity_refresh',
+          'activity_page',
+          'feed_access',
+          'feed_view',
+          'feed_loaded',
+          'data_upload_started',
+          'data_upload_completed',
+          'search',
+          'filter_change',
+          'show_more',
+          'export'
+        ]
+        && request.resource.data.action.size() <= 128
+        && request.resource.data.details is map
+        && request.resource.data.details.keys().size() <= 8
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

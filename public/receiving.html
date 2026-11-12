@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Components Receiving</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen p-4 md:p-8">
 
@@ -23,7 +22,7 @@
                     Component Monitoring
                 </a>
                 <button id="adminToggleBtn" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-md font-semibold transition-all cursor-pointer">
-                    Admin Login
+                    Sign In
                 </button>
             </div>
         </div>
@@ -31,7 +30,7 @@
         <!-- LOGIN MODAL -->
         <div id="loginModal" class="hidden fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4">
             <div class="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full">
-                <h3 class="text-lg font-bold text-indigo-950 mb-3">Admin Login</h3>
+                <h3 class="text-lg font-bold text-indigo-950 mb-3">User Login</h3>
                 <input type="email" id="adminEmail" placeholder="Email" class="w-full p-3 border border-slate-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <input type="password" id="adminPassword" placeholder="Password" class="w-full p-3 border border-slate-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <p id="loginError" class="hidden text-sm text-rose-600 mb-3"></p>
@@ -42,10 +41,19 @@
             </div>
         </div>
 
+        <div id="authGate" class="p-8 mb-8 rounded-xl border border-indigo-200 bg-indigo-50 text-center">
+            <h2 class="text-lg font-bold text-indigo-950 mb-2">Sign in to access the feeds</h2>
+            <p class="text-sm text-slate-600">Monitoring and receiving data are available to signed-in users.</p>
+        </div>
+
+        <div id="authenticatedApp" class="hidden">
         <!-- ADMIN SECTION -->
         <div id="uploadSection" class="hidden mb-8 p-6 bg-slate-100 rounded-xl border border-slate-300">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-lg font-bold text-indigo-950">Admin Upload</h2>
+                <div>
+                    <h2 class="text-lg font-bold text-indigo-950">Data Upload</h2>
+                    <p id="signedInUser" class="text-xs text-slate-500 mt-1"></p>
+                </div>
                 <button id="logoutBtn" class="text-xs text-rose-600 hover:underline font-semibold cursor-pointer">Logout</button>
             </div>
             <div class="p-5 border-2 border-dashed border-emerald-200 rounded-lg bg-emerald-50/50 flex flex-col items-center mb-6">
@@ -111,14 +119,36 @@
                 </table>
             </div>
         </div>
+        <details id="activitySection" class="mt-8 rounded-xl border border-slate-200 bg-white">
+            <summary class="cursor-pointer p-4 font-semibold text-indigo-950">User Activity</summary>
+            <div class="px-4 pb-4">
+                <p class="mb-3 text-xs text-slate-500">Search terms and filters are recorded and visible to all signed-in users. The log is paginated.</p>
+                <div class="mb-3 flex gap-2">
+                    <button id="activityRefreshBtn" class="rounded bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">Refresh activity</button>
+                    <button id="activityMoreBtn" class="hidden rounded bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-300">Load older activity</button>
+                </div>
+                <div class="overflow-x-auto rounded-lg border border-slate-200">
+                    <table class="min-w-full divide-y divide-slate-200 text-left text-xs">
+                        <thead class="bg-slate-100 font-semibold text-slate-700">
+                            <tr><th class="p-3">TIME</th><th class="p-3">USER</th><th class="p-3">ACTION</th><th class="p-3">DETAILS</th></tr>
+                        </thead>
+                        <tbody id="activityBody" class="divide-y divide-slate-200 bg-white">
+                            <tr><td colspan="4" class="p-4 text-center text-slate-400">Open this section to load activity.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </details>
+        </div>
     </div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-        import { getFirestore, doc, collection, onSnapshot, getDocs, query, where, writeBatch }
+        import { getFirestore, doc, collection, onSnapshot, getDoc, getDocs, query, where, writeBatch }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+        import { recordActivity, getActivityPage, loadGlobalScript } from "./activity.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBp-4LtvPoblVVhzJJJZdsmGVu6bUyixJY",
@@ -134,13 +164,89 @@
         const db = getFirestore(app);
 
         const CHUNK_SIZE = 500;
-        const DISPLAY_LIMIT = 1000;
+        const DISPLAY_LIMIT = 200;
         let masterData = [];
         let currentVersion = null;
-        let showAll = false;
+        let displayedLimit = DISPLAY_LIMIT;
+        let stopReceivingListener = null;
+        let activityEntries = [];
+        let activityCursor = null;
+        let activityHasMore = false;
+        let activityLoading = false;
+        let activityLoaded = false;
+        let activityRequestId = 0;
+        let activeUserId = null;
 
         const $ = (id) => document.getElementById(id);
         const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        function trackActivity(action, details = {}) {
+            const user = auth.currentUser;
+            if (!user) return;
+            recordActivity(db, user, action, details).catch(error => {
+                console.error("Could not record user activity.", error);
+                showBanner("Could not record user activity. Please check your connection and try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            });
+        }
+
+        function debounce(callback, delay = 250) {
+            let timer;
+            return (...args) => {
+                clearTimeout(timer);
+                timer = setTimeout(() => callback(...args), delay);
+            };
+        }
+
+        function renderActivity() {
+            const body = $('activityBody');
+            if (!activityEntries.length) {
+                body.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">No activity recorded yet.</td></tr>`;
+            } else {
+                body.innerHTML = activityEntries.map(entry => {
+                    const time = entry.createdAt?.toDate ? entry.createdAt.toDate().toLocaleString() : '';
+                    const details = Object.entries(entry.details || {}).map(([key, value]) => `${key}: ${value}`).join(' · ');
+                    return `<tr>
+                        <td class="whitespace-nowrap p-3">${esc(time)}</td>
+                        <td class="p-3">${esc(entry.email || entry.uid)}</td>
+                        <td class="whitespace-nowrap p-3">${esc(entry.action)}</td>
+                        <td class="p-3">${esc(details)}</td>
+                    </tr>`;
+                }).join('');
+            }
+            $('activityMoreBtn').classList.toggle('hidden', !activityHasMore);
+        }
+
+        async function loadActivityPage(reset = false) {
+            if (activityLoading) return;
+            activityLoading = true;
+            const requestId = ++activityRequestId;
+            const userId = auth.currentUser?.uid;
+            $('activityRefreshBtn').disabled = true;
+            $('activityMoreBtn').disabled = true;
+            try {
+                if (reset) {
+                    activityEntries = [];
+                    activityCursor = null;
+                    activityHasMore = false;
+                }
+                const page = await getActivityPage(db, activityCursor);
+                if (requestId !== activityRequestId || auth.currentUser?.uid !== userId) return;
+                activityEntries = reset ? page.entries : [...activityEntries, ...page.entries];
+                activityCursor = page.cursor;
+                activityHasMore = page.hasMore;
+                activityLoaded = true;
+                renderActivity();
+            } catch (error) {
+                console.error("Could not load user activity.", error);
+                showBanner("Could not load user activity. Please check your connection and try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            } finally {
+                if (requestId === activityRequestId) {
+                    activityLoading = false;
+                    $('activityRefreshBtn').disabled = false;
+                    $('activityMoreBtn').disabled = false;
+                }
+            }
+        }
 
         function showBanner(message, classes) {
             const b = $('statusBanner');
@@ -168,22 +274,107 @@
                 $('loginError').classList.remove('hidden');
             }
         };
-        $('logoutBtn').onclick = () => signOut(auth);
+        $('logoutBtn').onclick = async () => {
+            try {
+                await recordActivity(db, auth.currentUser, 'logout', { page: 'receiving' });
+                await signOut(auth);
+            } catch (error) {
+                console.error("Could not log out.", error);
+                showBanner("Could not log out because the activity could not be recorded. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        };
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
+                if (activeUserId && activeUserId !== user.uid) {
+                    stopReceivingListener?.();
+                    stopReceivingListener = null;
+                    clearUserData();
+                }
+                activeUserId = user.uid;
+                $('authGate').classList.add('hidden');
+                $('authenticatedApp').classList.remove('hidden');
                 $('uploadSection').classList.remove('hidden');
                 $('adminToggleBtn').classList.add('hidden');
-                showBanner("Logged in as admin.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+                $('signedInUser').textContent = `Signed in as ${user.email || 'user'}`;
+                showBanner("Signed in. Feed data and uploads are available.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+                trackActivity('login', { page: 'receiving' });
+                trackActivity('feed_access', { feed: 'receiving' });
+                startReceivingListener();
             } else {
+                stopReceivingListener?.();
+                stopReceivingListener = null;
+                clearUserData();
+                activeUserId = null;
+                $('authenticatedApp').classList.add('hidden');
+                $('authGate').classList.remove('hidden');
                 $('uploadSection').classList.add('hidden');
                 $('adminToggleBtn').classList.remove('hidden');
                 $('statusBanner').classList.add('hidden');
             }
         });
 
+        function clearUserData() {
+            masterData = [];
+            currentVersion = null;
+            displayedLimit = DISPLAY_LIMIT;
+            activityRequestId++;
+            activityEntries = [];
+            activityCursor = null;
+            activityHasMore = false;
+            activityLoading = false;
+            activityLoaded = false;
+            $('searchInput').value = '';
+            $('dateFilter').value = 'ALL';
+            $('supplierFilter').value = 'ALL';
+            $('adminEmail').value = '';
+            $('adminPassword').value = '';
+            $('signedInUser').textContent = '';
+            $('lastUpdated').textContent = '';
+            $('rowCount').textContent = '';
+            $('downloadBtn').classList.add('hidden');
+            $('tableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-slate-400">Sign in to load data.</td></tr>`;
+            $('activityBody').innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Open this section to load activity.</td></tr>`;
+            $('activityMoreBtn').classList.add('hidden');
+            $('activityRefreshBtn').disabled = false;
+            $('activityMoreBtn').disabled = false;
+            $('activitySection').open = false;
+        }
+
+        $('activitySection').addEventListener('toggle', async () => {
+            if (!$('activitySection').open || activityLoaded || !auth.currentUser) return;
+            try {
+                await recordActivity(db, auth.currentUser, 'activity_view', { page: 'receiving' });
+                await loadActivityPage(true);
+            } catch (error) {
+                console.error("Could not record activity-view event.", error);
+                showBanner("Could not record activity-view activity. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        });
+        $('activityRefreshBtn').onclick = async () => {
+            try {
+                await recordActivity(db, auth.currentUser, 'activity_refresh', { page: 'receiving' });
+                await loadActivityPage(true);
+            } catch (error) {
+                console.error("Could not refresh activity.", error);
+                showBanner("Could not refresh activity. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        };
+        $('activityMoreBtn').onclick = async () => {
+            try {
+                await recordActivity(db, auth.currentUser, 'activity_page', { page: 'receiving' });
+                await loadActivityPage();
+            } catch (error) {
+                console.error("Could not load older activity.", error);
+                showBanner("Could not load older activity. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        };
+
         // ---------- Viewer: live updates ----------
-        onSnapshot(doc(db, "receiving", "meta"), async (snap) => {
+        function startReceivingListener() {
+        stopReceivingListener = onSnapshot(doc(db, "receiving", "meta"), async (snap) => {
+            const listenerUserId = auth.currentUser?.uid;
+            if (!listenerUserId) return;
             if (!snap.exists()) {
                 masterData = [];
                 $('tableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-slate-400">No data loaded yet.</td></tr>`;
@@ -194,6 +385,7 @@
             try {
                 const q = query(collection(db, "receiving_chunks"), where("version", "==", meta.version));
                 const res = await getDocs(q);
+                if (auth.currentUser?.uid !== listenerUserId) return;
                 const chunks = res.docs.map(d => d.data()).sort((a, b) => a.idx - b.idx);
                 masterData = chunks.flatMap(c => c.rows);
                 currentVersion = meta.version;
@@ -202,7 +394,9 @@
                 }
                 $('downloadBtn').classList.toggle('hidden', masterData.length === 0);
                 buildFilters();
+                displayedLimit = DISPLAY_LIMIT;
                 filterData();
+                trackActivity('feed_loaded', { feed: 'receiving', rows: masterData.length });
             } catch (e) {
                 console.error(e);
                 $('tableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-rose-500">Failed to load data. Please refresh.</td></tr>`;
@@ -211,9 +405,11 @@
             console.error(err);
             $('tableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-rose-500">Cannot connect to database. Check Firebase config.</td></tr>`;
         });
+        }
 
         // ---------- Excel reading ----------
-        function readExcel(file) {
+        async function readExcel(file) {
+            const XLSX = await loadGlobalScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", "XLSX");
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
@@ -272,18 +468,29 @@
                     throw new Error("Walang nabasang rows. Check kung nasa unang row ang column headers.");
                 }
 
+                await recordActivity(db, auth.currentUser, 'data_upload_started', {
+                    feed: 'receiving',
+                    rows: rows.length,
+                    file: file.name
+                });
                 const version = String(Date.now());
                 const totalChunks = Math.ceil(rows.length / CHUNK_SIZE);
+                const previousMeta = await getDoc(doc(db, "receiving", "meta"));
+                const previousVersion = previousMeta.exists() ? previousMeta.data().version : null;
+                const maxWritesPerBatch = 8;
 
                 // 1) bagong chunks muna
-                for (let i = 0; i < totalChunks; i++) {
+                for (let start = 0; start < totalChunks; start += maxWritesPerBatch) {
                     const batch = writeBatch(db);
-                    batch.set(doc(db, "receiving_chunks", `${version}_${i}`), {
-                        version, idx: i,
-                        rows: rows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-                    });
+                    const end = Math.min(start + maxWritesPerBatch, totalChunks);
+                    for (let i = start; i < end; i++) {
+                        batch.set(doc(db, "receiving_chunks", `${version}_${i}`), {
+                            version, idx: i,
+                            rows: rows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+                        });
+                    }
                     await batch.commit();
-                    showBanner(`Uploading... ${i + 1}/${totalChunks}`, "bg-blue-100 text-blue-800 border border-blue-300");
+                    showBanner(`Uploading... ${end}/${totalChunks}`, "bg-blue-100 text-blue-800 border border-blue-300");
                 }
 
                 // 2) i-switch ang meta (dito mag-a-auto update ang viewers)
@@ -291,15 +498,17 @@
                 metaBatch.set(doc(db, "receiving", "meta"), { version, totalRows: rows.length, updatedAt: Date.now() });
                 await metaBatch.commit();
 
-                // 3) burahin ang lumang chunks
-                const old = await getDocs(collection(db, "receiving_chunks"));
-                const stale = old.docs.filter(d => d.data().version !== version);
-                for (let i = 0; i < stale.length; i += 400) {
+                // 3) burahin ang dating active na chunks
+                if (previousVersion && previousVersion !== version) {
+                const stale = await getDocs(query(collection(db, "receiving_chunks"), where("version", "==", previousVersion)));
+                for (let i = 0; i < stale.docs.length; i += maxWritesPerBatch) {
                     const b = writeBatch(db);
-                    stale.slice(i, i + 400).forEach(d => b.delete(d.ref));
+                    stale.docs.slice(i, i + maxWritesPerBatch).forEach(d => b.delete(d.ref));
                     await b.commit();
                 }
+                }
 
+                trackActivity('data_upload_completed', { feed: 'receiving', rows: rows.length });
                 showBanner(`Done! ${rows.length} rows uploaded. Viewers will see it automatically.`, "bg-emerald-100 text-emerald-800 border border-emerald-300");
             } catch (err) {
                 console.error(err);
@@ -335,7 +544,7 @@
                 btn.classList.add('hidden');
                 return;
             }
-            const shown = showAll ? data : data.slice(0, DISPLAY_LIMIT);
+            const shown = data.slice(0, displayedLimit);
             tbody.innerHTML = shown.map(r => `<tr>
                 <td class="p-3 border-b whitespace-nowrap">${esc(r.date)}</td>
                 <td class="p-3 border-b">${esc(r.supplier)}</td>
@@ -351,11 +560,9 @@
                 <td class="p-3 border-b">${esc(r.generalRemarks)}</td>
             </tr>`).join('');
 
-            if (data.length > DISPLAY_LIMIT) {
-                $('rowCount').textContent = showAll
-                    ? `Showing all ${data.length} rows.`
-                    : `Showing first ${DISPLAY_LIMIT} of ${data.length} rows.`;
-                btn.textContent = showAll ? 'Show Less' : `Show All (${data.length})`;
+            if (data.length > displayedLimit) {
+                $('rowCount').textContent = `Showing ${shown.length} of ${data.length} rows.`;
+                btn.textContent = `Show ${Math.min(DISPLAY_LIMIT, data.length - displayedLimit)} more`;
                 btn.classList.remove('hidden');
             } else {
                 $('rowCount').textContent = `${data.length} row(s)`;
@@ -376,14 +583,38 @@
             });
             renderTable(filtered);
         }
-        $('searchInput').addEventListener('input', filterData);
-        $('dateFilter').addEventListener('change', filterData);
-        $('supplierFilter').addEventListener('change', filterData);
-        $('showAllBtn').onclick = () => { showAll = !showAll; filterData(); };
+        $('searchInput').addEventListener('input', debounce(() => {
+            displayedLimit = DISPLAY_LIMIT;
+            filterData();
+            trackActivity('search', {
+                feed: 'receiving',
+                query: $('searchInput').value.trim(),
+                date: $('dateFilter').value,
+                supplier: $('supplierFilter').value
+            });
+        }));
+        $('dateFilter').addEventListener('change', () => {
+            displayedLimit = DISPLAY_LIMIT;
+            filterData();
+            trackActivity('filter_change', { feed: 'receiving', date: $('dateFilter').value });
+        });
+        $('supplierFilter').addEventListener('change', () => {
+            displayedLimit = DISPLAY_LIMIT;
+            filterData();
+            trackActivity('filter_change', { feed: 'receiving', supplier: $('supplierFilter').value });
+        });
+        $('showAllBtn').onclick = () => {
+            displayedLimit += DISPLAY_LIMIT;
+            filterData();
+            trackActivity('show_more', { feed: 'receiving', rowsShown: displayedLimit });
+        };
 
         // ---------- Download ----------
-        $('downloadBtn').onclick = () => {
+        $('downloadBtn').onclick = async () => {
             if (!masterData.length) return;
+            try {
+            const XLSX = await loadGlobalScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", "XLSX");
+            trackActivity('export', { feed: 'receiving', rows: masterData.length });
             const header = ['DATE RECEIVED','SUPPLIER','ITEM CODE','PARTICULAR','QTY RECEIVED','UOM','SALES ORDER','PROJECT','ITEM NO','REFERENCE NO.','ITEM REMARKS','GENERAL REMARKS'];
             const body = masterData.map(r => [r.date, r.supplier, r.itemCode, r.particular, r.qty, r.uom, r.salesOrder, r.project, r.itemNo, r.refNo, r.itemRemarks, r.generalRemarks]);
             const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
@@ -391,6 +622,10 @@
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Components Receiving');
             XLSX.writeFile(wb, 'Components_Receiving.xlsx');
+            } catch (error) {
+                console.error("Could not export receiving data.", error);
+                showBanner("Could not prepare the Excel export. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
         };
     </script>
 </body>

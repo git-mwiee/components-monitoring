@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Component Monitoring System</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans min-h-screen p-4 md:p-8">
 
@@ -20,14 +18,14 @@
                 <p id="lastUpdated" class="text-xs text-slate-400 mt-1"></p>
             </div>
             <button id="adminToggleBtn" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-md font-semibold transition-all cursor-pointer">
-                Admin Login
+                Sign In
             </button>
         </div>
 
         <!-- LOGIN MODAL -->
         <div id="loginModal" class="hidden fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4">
             <div class="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full">
-                <h3 class="text-lg font-bold text-indigo-950 mb-3">Admin Login</h3>
+                <h3 class="text-lg font-bold text-indigo-950 mb-3">User Login</h3>
                 <input type="email" id="adminEmail" placeholder="Email" class="w-full p-3 border border-slate-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <input type="password" id="adminPassword" placeholder="Password" class="w-full p-3 border border-slate-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 <p id="loginError" class="hidden text-sm text-rose-600 mb-3"></p>
@@ -38,10 +36,19 @@
             </div>
         </div>
 
+        <div id="authGate" class="p-8 mb-8 rounded-xl border border-indigo-200 bg-indigo-50 text-center">
+            <h2 class="text-lg font-bold text-indigo-950 mb-2">Sign in to access the feeds</h2>
+            <p class="text-sm text-slate-600">Monitoring and receiving data are available to signed-in users.</p>
+        </div>
+
+        <div id="authenticatedApp" class="hidden">
         <!-- ADMIN SECTION (only shown after login) -->
         <div id="uploadSection" class="hidden mb-8 p-6 bg-slate-100 rounded-xl border border-slate-300">
             <div class="flex justify-between items-center mb-4">
-                <h2 class="text-lg font-bold text-indigo-950">Admin Upload & Feed Controls</h2>
+                <div>
+                    <h2 class="text-lg font-bold text-indigo-950">Data Upload & Feed Controls</h2>
+                    <p id="signedInUser" class="text-xs text-slate-500 mt-1"></p>
+                </div>
                 <button id="logoutBtn" class="text-xs text-rose-600 hover:underline font-semibold cursor-pointer">Logout</button>
             </div>
 
@@ -165,14 +172,36 @@
                 </table>
             </div>
         </div>
+        <details id="activitySection" class="mt-8 rounded-xl border border-slate-200 bg-white">
+            <summary class="cursor-pointer p-4 font-semibold text-indigo-950">User Activity</summary>
+            <div class="px-4 pb-4">
+                <p class="mb-3 text-xs text-slate-500">Search terms and filters are recorded and visible to all signed-in users. The log is paginated.</p>
+                <div class="mb-3 flex gap-2">
+                    <button id="activityRefreshBtn" class="rounded bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">Refresh activity</button>
+                    <button id="activityMoreBtn" class="hidden rounded bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-300">Load older activity</button>
+                </div>
+                <div class="overflow-x-auto rounded-lg border border-slate-200">
+                    <table class="min-w-full divide-y divide-slate-200 text-left text-xs">
+                        <thead class="bg-slate-100 font-semibold text-slate-700">
+                            <tr><th class="p-3">TIME</th><th class="p-3">USER</th><th class="p-3">ACTION</th><th class="p-3">DETAILS</th></tr>
+                        </thead>
+                        <tbody id="activityBody" class="divide-y divide-slate-200 bg-white">
+                            <tr><td colspan="4" class="p-4 text-center text-slate-400">Open this section to load activity.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </details>
+        </div>
     </div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-        import { getFirestore, doc, collection, onSnapshot, getDocs, query, where, writeBatch }
+        import { getFirestore, doc, collection, onSnapshot, getDoc, getDocs, query, where, writeBatch }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+        import { recordActivity, getActivityPage, loadGlobalScript } from "./activity.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBp-4LtvPoblVVhzJJJZdsmGVu6bUyixJY",
@@ -188,18 +217,95 @@
         const db = getFirestore(app);
 
         const CHUNK_SIZE = 500;
-        const DISPLAY_LIMIT = 1000;
+        const DISPLAY_LIMIT = 200;
 
         let masterGlobalData = [];   // monitoring
         let currentVersion = null;
-        let showAll = false;
+        let monitoringLimit = DISPLAY_LIMIT;
 
         let recData = [];            // receiving
         let recVersion = null;
-        let recShowAll = false;
+        let receivingLimit = DISPLAY_LIMIT;
+        let stopMonitoringListener = null;
+        let stopReceivingListener = null;
+        let activityEntries = [];
+        let activityCursor = null;
+        let activityHasMore = false;
+        let activityLoading = false;
+        let activityLoaded = false;
+        let activityRequestId = 0;
+        let activeUserId = null;
 
         const $ = (id) => document.getElementById(id);
         const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        function trackActivity(action, details = {}) {
+            const user = auth.currentUser;
+            if (!user) return;
+            recordActivity(db, user, action, details).catch(error => {
+                console.error("Could not record user activity.", error);
+                showBanner("Could not record user activity. Please check your connection and try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            });
+        }
+
+        function debounce(callback, delay = 250) {
+            let timer;
+            return (...args) => {
+                clearTimeout(timer);
+                timer = setTimeout(() => callback(...args), delay);
+            };
+        }
+
+        function renderActivity() {
+            const body = $('activityBody');
+            if (!activityEntries.length) {
+                body.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">No activity recorded yet.</td></tr>`;
+            } else {
+                body.innerHTML = activityEntries.map(entry => {
+                    const time = entry.createdAt?.toDate ? entry.createdAt.toDate().toLocaleString() : '';
+                    const details = Object.entries(entry.details || {}).map(([key, value]) => `${key}: ${value}`).join(' · ');
+                    return `<tr>
+                        <td class="whitespace-nowrap p-3">${esc(time)}</td>
+                        <td class="p-3">${esc(entry.email || entry.uid)}</td>
+                        <td class="whitespace-nowrap p-3">${esc(entry.action)}</td>
+                        <td class="p-3">${esc(details)}</td>
+                    </tr>`;
+                }).join('');
+            }
+            $('activityMoreBtn').classList.toggle('hidden', !activityHasMore);
+        }
+
+        async function loadActivityPage(reset = false) {
+            if (activityLoading) return;
+            activityLoading = true;
+            const requestId = ++activityRequestId;
+            const userId = auth.currentUser?.uid;
+            $('activityRefreshBtn').disabled = true;
+            $('activityMoreBtn').disabled = true;
+            try {
+                if (reset) {
+                    activityEntries = [];
+                    activityCursor = null;
+                    activityHasMore = false;
+                }
+                const page = await getActivityPage(db, activityCursor);
+                if (requestId !== activityRequestId || auth.currentUser?.uid !== userId) return;
+                activityEntries = reset ? page.entries : [...activityEntries, ...page.entries];
+                activityCursor = page.cursor;
+                activityHasMore = page.hasMore;
+                activityLoaded = true;
+                renderActivity();
+            } catch (error) {
+                console.error("Could not load user activity.", error);
+                showBanner("Could not load user activity. Please check your connection and try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            } finally {
+                if (requestId === activityRequestId) {
+                    activityLoading = false;
+                    $('activityRefreshBtn').disabled = false;
+                    $('activityMoreBtn').disabled = false;
+                }
+            }
+        }
 
         // ---------- Banner ----------
         function showBanner(message, classes) {
@@ -223,6 +329,7 @@
                 : "Search Sales Order or Item Code to check item status.";
             $('lastUpdated').textContent = (rec ? recUpdatedText : monUpdatedText);
             history.replaceState(null, '', rec ? '#receiving' : '#monitoring');
+            if (auth.currentUser) trackActivity('feed_view', { feed: rec ? 'receiving' : 'monitoring' });
         }
         let monUpdatedText = '';
         let recUpdatedText = '';
@@ -249,24 +356,126 @@
                 $('loginError').classList.remove('hidden');
             }
         };
-        $('logoutBtn').onclick = () => signOut(auth);
+        $('logoutBtn').onclick = async () => {
+            try {
+                await recordActivity(db, auth.currentUser, 'logout', { page: 'monitoring' });
+                await signOut(auth);
+            } catch (error) {
+                console.error("Could not log out.", error);
+                showBanner("Could not log out because the activity could not be recorded. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        };
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
+                if (activeUserId && activeUserId !== user.uid) stopDataListeners();
+                activeUserId = user.uid;
+                $('authGate').classList.add('hidden');
+                $('authenticatedApp').classList.remove('hidden');
                 $('uploadSection').classList.remove('hidden');
                 $('adminToggleBtn').classList.add('hidden');
-                showBanner("Logged in as admin.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+                $('signedInUser').textContent = `Signed in as ${user.email || 'user'}`;
+                showBanner("Signed in. Feed data and uploads are available.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+                trackActivity('login', { page: 'monitoring' });
+                trackActivity('feed_access', { feeds: 'monitoring, receiving' });
+                startDataListeners();
             } else {
+                stopDataListeners();
+                activeUserId = null;
+                $('authGate').classList.remove('hidden');
+                $('authenticatedApp').classList.add('hidden');
                 $('uploadSection').classList.add('hidden');
                 $('adminToggleBtn').classList.remove('hidden');
                 $('statusBanner').classList.add('hidden');
+                activityEntries = [];
+                activityCursor = null;
+                activityHasMore = false;
+                activityLoaded = false;
             }
         });
+
+        $('activitySection').addEventListener('toggle', async () => {
+            if (!$('activitySection').open || activityLoaded || !auth.currentUser) return;
+            try {
+                await recordActivity(db, auth.currentUser, 'activity_view', { page: 'monitoring' });
+                await loadActivityPage(true);
+            } catch (error) {
+                console.error("Could not record activity-view event.", error);
+                showBanner("Could not record activity-view activity. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        });
+        $('activityRefreshBtn').onclick = async () => {
+            try {
+                await recordActivity(db, auth.currentUser, 'activity_refresh', { page: 'monitoring' });
+                await loadActivityPage(true);
+            } catch (error) {
+                console.error("Could not refresh activity.", error);
+                showBanner("Could not refresh activity. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        };
+        $('activityMoreBtn').onclick = async () => {
+            try {
+                await recordActivity(db, auth.currentUser, 'activity_page', { page: 'monitoring' });
+                await loadActivityPage();
+            } catch (error) {
+                console.error("Could not load older activity.", error);
+                showBanner("Could not load older activity. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        };
 
         // =====================================================
         // MONITORING
         // =====================================================
-        onSnapshot(doc(db, "monitoring", "meta"), async (snap) => {
+        function startDataListeners() {
+            if (!stopMonitoringListener) startMonitoringListener();
+            if (!stopReceivingListener) startReceivingListener();
+        }
+
+        function stopDataListeners() {
+            stopMonitoringListener?.();
+            stopReceivingListener?.();
+            stopMonitoringListener = null;
+            stopReceivingListener = null;
+            masterGlobalData = [];
+            currentVersion = null;
+            recData = [];
+            recVersion = null;
+            monUpdatedText = '';
+            recUpdatedText = '';
+            monitoringLimit = DISPLAY_LIMIT;
+            receivingLimit = DISPLAY_LIMIT;
+            activityRequestId++;
+            activityEntries = [];
+            activityCursor = null;
+            activityHasMore = false;
+            activityLoading = false;
+            activityLoaded = false;
+            $('searchInput').value = '';
+            $('recSearch').value = '';
+            $('statusFilter').value = 'ALL';
+            $('recDateFilter').value = 'ALL';
+            $('recSupplierFilter').value = 'ALL';
+            $('rowCount').textContent = '';
+            $('recRowCount').textContent = '';
+            $('adminEmail').value = '';
+            $('adminPassword').value = '';
+            $('signedInUser').textContent = '';
+            $('lastUpdated').textContent = '';
+            $('downloadBtn').classList.add('hidden');
+            $('recDownloadBtn').classList.add('hidden');
+            $('tableBody').innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400">Sign in to load data.</td></tr>`;
+            $('recTableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-slate-400">Sign in to load data.</td></tr>`;
+            $('activityBody').innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-400">Open this section to load activity.</td></tr>`;
+            $('activityMoreBtn').classList.add('hidden');
+            $('activityRefreshBtn').disabled = false;
+            $('activityMoreBtn').disabled = false;
+            $('activitySection').open = false;
+        }
+
+        function startMonitoringListener() {
+            stopMonitoringListener = onSnapshot(doc(db, "monitoring", "meta"), async (snap) => {
+            const listenerUserId = auth.currentUser?.uid;
+            if (!listenerUserId) return;
             if (!snap.exists()) {
                 masterGlobalData = [];
                 $('tableBody').innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400">No data loaded yet.</td></tr>`;
@@ -277,6 +486,7 @@
             try {
                 const q = query(collection(db, "chunks"), where("version", "==", meta.version));
                 const res = await getDocs(q);
+                if (auth.currentUser?.uid !== listenerUserId) return;
                 const chunks = res.docs.map(d => d.data()).sort((a, b) => a.idx - b.idx);
                 masterGlobalData = chunks.flatMap(c => c.rows);
                 currentVersion = meta.version;
@@ -285,7 +495,9 @@
                     if (!$('viewMon').classList.contains('hidden')) $('lastUpdated').textContent = monUpdatedText;
                 }
                 $('downloadBtn').classList.toggle('hidden', masterGlobalData.length === 0);
+                monitoringLimit = DISPLAY_LIMIT;
                 filterData();
+                trackActivity('feed_loaded', { feed: 'monitoring', rows: masterGlobalData.length });
             } catch (e) {
                 console.error(e);
                 $('tableBody').innerHTML = `<tr><td colspan="9" class="p-6 text-center text-rose-500">Failed to load data. Please refresh.</td></tr>`;
@@ -294,8 +506,10 @@
             console.error(err);
             $('tableBody').innerHTML = `<tr><td colspan="9" class="p-6 text-center text-rose-500">Cannot connect to database. Check Firebase config.</td></tr>`;
         });
+        }
 
-        function readExcel(file, rawValues = true) {
+        async function readExcel(file, rawValues = true) {
+            const XLSX = await loadGlobalScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", "XLSX");
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
@@ -323,6 +537,11 @@
 
             try {
                 const [lackingData, suppliedData] = await Promise.all([readExcel(lackingFile), readExcel(suppliedFile)]);
+                await recordActivity(db, auth.currentUser, 'data_upload_started', {
+                    feeds: 'monitoring and receiving',
+                    lackingRows: lackingData.length,
+                    suppliedRows: suppliedData.length
+                });
 
                 const pool = {};
                 suppliedData.forEach(row => {
@@ -387,6 +606,7 @@
                     });
                 }
 
+                trackActivity('data_upload_completed', { monitoringRows: clean.length, receivingRows: recRows.length });
                 showBanner(`Done! Monitoring: ${clean.length} rows, Receiving: ${recRows.length} rows. Viewers will see it automatically.`, "bg-emerald-100 text-emerald-800 border border-emerald-300");
             } catch (err) {
                 console.error(err);
@@ -400,24 +620,30 @@
         async function uploadChunks({ rows, chunksCol, metaCol, onProgress }) {
             const version = String(Date.now());
             const totalChunks = Math.ceil(rows.length / CHUNK_SIZE);
-            for (let i = 0; i < totalChunks; i++) {
+            const previousMeta = await getDoc(doc(db, metaCol, "meta"));
+            const previousVersion = previousMeta.exists() ? previousMeta.data().version : null;
+            const maxWritesPerBatch = 8;
+            for (let start = 0; start < totalChunks; start += maxWritesPerBatch) {
                 const batch = writeBatch(db);
-                batch.set(doc(db, chunksCol, `${version}_${i}`), {
-                    version, idx: i,
-                    rows: rows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
-                });
+                const end = Math.min(start + maxWritesPerBatch, totalChunks);
+                for (let i = start; i < end; i++) {
+                    batch.set(doc(db, chunksCol, `${version}_${i}`), {
+                        version, idx: i,
+                        rows: rows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+                    });
+                }
                 await batch.commit();
-                onProgress(i + 1, totalChunks);
+                onProgress(end, totalChunks);
             }
             const metaBatch = writeBatch(db);
             metaBatch.set(doc(db, metaCol, "meta"), { version, totalRows: rows.length, updatedAt: Date.now() });
             await metaBatch.commit();
 
-            const old = await getDocs(collection(db, chunksCol));
-            const stale = old.docs.filter(d => d.data().version !== version);
-            for (let i = 0; i < stale.length; i += 400) {
+            if (!previousVersion || previousVersion === version) return;
+            const stale = await getDocs(query(collection(db, chunksCol), where("version", "==", previousVersion)));
+            for (let i = 0; i < stale.docs.length; i += maxWritesPerBatch) {
                 const b = writeBatch(db);
-                stale.slice(i, i + 400).forEach(d => b.delete(d.ref));
+                stale.docs.slice(i, i + maxWritesPerBatch).forEach(d => b.delete(d.ref));
                 await b.commit();
             }
         }
@@ -431,7 +657,7 @@
                 btn.classList.add('hidden');
                 return;
             }
-            const shown = showAll ? data : data.slice(0, DISPLAY_LIMIT);
+            const shown = data.slice(0, monitoringLimit);
             tbody.innerHTML = shown.map(row => {
                 const status = String(row['STATUS'] || '').trim().toUpperCase();
                 let badge = '';
@@ -449,11 +675,9 @@
                     <td class="p-3 border-b">${esc(row['REMARKS'])}</td>
                 </tr>`;
             }).join('');
-            if (data.length > DISPLAY_LIMIT) {
-                $('rowCount').textContent = showAll
-                    ? `Showing all ${data.length} rows.`
-                    : `Showing first ${DISPLAY_LIMIT} of ${data.length} rows.`;
-                btn.textContent = showAll ? 'Show Less' : `Show All (${data.length})`;
+            if (data.length > monitoringLimit) {
+                $('rowCount').textContent = `Showing ${shown.length} of ${data.length} rows.`;
+                btn.textContent = `Show ${Math.min(DISPLAY_LIMIT, data.length - monitoringLimit)} more`;
                 btn.classList.remove('hidden');
             } else {
                 $('rowCount').textContent = `${data.length} row(s)`;
@@ -475,12 +699,31 @@
             });
             renderTable(filtered);
         }
-        $('searchInput').addEventListener('input', filterData);
-        $('statusFilter').addEventListener('change', filterData);
-        $('showAllBtn').onclick = () => { showAll = !showAll; filterData(); };
+        $('searchInput').addEventListener('input', debounce(() => {
+            monitoringLimit = DISPLAY_LIMIT;
+            filterData();
+            trackActivity('search', {
+                feed: 'monitoring',
+                query: $('searchInput').value.trim(),
+                status: $('statusFilter').value
+            });
+        }));
+        $('statusFilter').addEventListener('change', () => {
+            monitoringLimit = DISPLAY_LIMIT;
+            filterData();
+            trackActivity('filter_change', { feed: 'monitoring', status: $('statusFilter').value });
+        });
+        $('showAllBtn').onclick = () => {
+            monitoringLimit += DISPLAY_LIMIT;
+            filterData();
+            trackActivity('show_more', { feed: 'monitoring', rowsShown: monitoringLimit });
+        };
 
         $('downloadBtn').onclick = async () => {
             if (!masterGlobalData.length) return;
+            try {
+            const ExcelJS = await loadGlobalScript("https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js", "ExcelJS");
+            trackActivity('export', { feed: 'monitoring', rows: masterGlobalData.length });
             const workbook = new ExcelJS.Workbook();
             const ws = workbook.addWorksheet('Monitoring Report');
             ws.columns = [
@@ -535,13 +778,20 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url; a.download = 'Component_Monitoring_Report.xlsx'; a.click();
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch (error) {
+                console.error("Could not export monitoring data.", error);
+                showBanner("Could not prepare the Excel export. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
         };
 
         // =====================================================
         // COMPONENTS RECEIVING
         // =====================================================
-        onSnapshot(doc(db, "receiving", "meta"), async (snap) => {
+        function startReceivingListener() {
+        stopReceivingListener = onSnapshot(doc(db, "receiving", "meta"), async (snap) => {
+            const listenerUserId = auth.currentUser?.uid;
+            if (!listenerUserId) return;
             if (!snap.exists()) {
                 recData = [];
                 $('recTableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-slate-400">No data loaded yet.</td></tr>`;
@@ -552,6 +802,7 @@
             try {
                 const q = query(collection(db, "receiving_chunks"), where("version", "==", meta.version));
                 const res = await getDocs(q);
+                if (auth.currentUser?.uid !== listenerUserId) return;
                 const chunks = res.docs.map(d => d.data()).sort((a, b) => a.idx - b.idx);
                 recData = chunks.flatMap(c => c.rows);
                 recVersion = meta.version;
@@ -561,7 +812,9 @@
                 }
                 $('recDownloadBtn').classList.toggle('hidden', recData.length === 0);
                 buildRecFilters();
+                receivingLimit = DISPLAY_LIMIT;
                 filterRec();
+                trackActivity('feed_loaded', { feed: 'receiving', rows: recData.length });
             } catch (e) {
                 console.error(e);
                 $('recTableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-rose-500">Failed to load data. Please refresh.</td></tr>`;
@@ -570,6 +823,7 @@
             console.error(err);
             $('recTableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-rose-500">Cannot connect to database.</td></tr>`;
         });
+        }
 
         // Pinapayagan ang bahagyang pagkakaiba sa pangalan ng column header
         const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
@@ -621,7 +875,7 @@
                 btn.classList.add('hidden');
                 return;
             }
-            const shown = recShowAll ? data : data.slice(0, DISPLAY_LIMIT);
+            const shown = data.slice(0, receivingLimit);
             tbody.innerHTML = shown.map(r => `<tr>
                 <td class="p-3 border-b whitespace-nowrap">${esc(r.date)}</td>
                 <td class="p-3 border-b">${esc(r.supplier)}</td>
@@ -636,11 +890,9 @@
                 <td class="p-3 border-b">${esc(r.itemRemarks)}</td>
                 <td class="p-3 border-b">${esc(r.generalRemarks)}</td>
             </tr>`).join('');
-            if (data.length > DISPLAY_LIMIT) {
-                $('recRowCount').textContent = recShowAll
-                    ? `Showing all ${data.length} rows.`
-                    : `Showing first ${DISPLAY_LIMIT} of ${data.length} rows.`;
-                btn.textContent = recShowAll ? 'Show Less' : `Show All (${data.length})`;
+            if (data.length > receivingLimit) {
+                $('recRowCount').textContent = `Showing ${shown.length} of ${data.length} rows.`;
+                btn.textContent = `Show ${Math.min(DISPLAY_LIMIT, data.length - receivingLimit)} more`;
                 btn.classList.remove('hidden');
             } else {
                 $('recRowCount').textContent = `${data.length} row(s)`;
@@ -661,13 +913,37 @@
             });
             renderRec(filtered);
         }
-        $('recSearch').addEventListener('input', filterRec);
-        $('recDateFilter').addEventListener('change', filterRec);
-        $('recSupplierFilter').addEventListener('change', filterRec);
-        $('recShowAllBtn').onclick = () => { recShowAll = !recShowAll; filterRec(); };
+        $('recSearch').addEventListener('input', debounce(() => {
+            receivingLimit = DISPLAY_LIMIT;
+            filterRec();
+            trackActivity('search', {
+                feed: 'receiving',
+                query: $('recSearch').value.trim(),
+                date: $('recDateFilter').value,
+                supplier: $('recSupplierFilter').value
+            });
+        }));
+        $('recDateFilter').addEventListener('change', () => {
+            receivingLimit = DISPLAY_LIMIT;
+            filterRec();
+            trackActivity('filter_change', { feed: 'receiving', date: $('recDateFilter').value });
+        });
+        $('recSupplierFilter').addEventListener('change', () => {
+            receivingLimit = DISPLAY_LIMIT;
+            filterRec();
+            trackActivity('filter_change', { feed: 'receiving', supplier: $('recSupplierFilter').value });
+        });
+        $('recShowAllBtn').onclick = () => {
+            receivingLimit += DISPLAY_LIMIT;
+            filterRec();
+            trackActivity('show_more', { feed: 'receiving', rowsShown: receivingLimit });
+        };
 
-        $('recDownloadBtn').onclick = () => {
+        $('recDownloadBtn').onclick = async () => {
             if (!recData.length) return;
+            try {
+            const XLSX = await loadGlobalScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", "XLSX");
+            trackActivity('export', { feed: 'receiving', rows: recData.length });
             const header = ['DATE RECEIVED','SUPPLIER','ITEM CODE','PARTICULAR','QTY RECEIVED','UOM','SALES ORDER','PROJECT','ITEM NO','REFERENCE NO.','ITEM REMARKS','GENERAL REMARKS'];
             const body = recData.map(r => [r.date, r.supplier, r.itemCode, r.particular, r.qty, r.uom, r.salesOrder, r.project, r.itemNo, r.refNo, r.itemRemarks, r.generalRemarks]);
             const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
@@ -675,6 +951,10 @@
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Components Receiving');
             XLSX.writeFile(wb, 'Components_Receiving.xlsx');
+            } catch (error) {
+                console.error("Could not export receiving data.", error);
+                showBanner("Could not prepare the Excel export. Please try again.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
         };
     </script>
 </body>
