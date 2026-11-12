@@ -154,6 +154,7 @@
         import { getFirestore, doc, collection, onSnapshot, getDoc, getDocs, query, where, writeBatch }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
         import { recordActivity, getActivityPage, loadGlobalScript } from "./activity.js";
+        import { sortReceivedNewestFirst } from "./receiving-utils.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBp-4LtvPoblVVhzJJJZdsmGVu6bUyixJY",
@@ -455,7 +456,7 @@
                 const res = await getDocs(q);
                 if (auth.currentUser?.uid !== listenerUserId) return;
                 const chunks = res.docs.map(d => d.data()).sort((a, b) => a.idx - b.idx);
-                masterData = chunks.flatMap(c => c.rows);
+                masterData = sortReceivedNewestFirst(chunks.flatMap(c => c.rows));
                 currentVersion = meta.version;
                 if (meta.updatedAt) {
                     $('lastUpdated').textContent = "Last updated: " + new Date(meta.updatedAt).toLocaleString();
@@ -597,7 +598,7 @@
                 if (values.includes(prev)) sel.value = prev;
             };
             // pinakabago muna sa dates (ayon sa pagkakasunod sa Excel)
-            const dates = [...new Set(masterData.map(r => r.date).filter(Boolean))].reverse();
+            const dates = [...new Set(masterData.map(r => r.date).filter(Boolean))];
             const suppliers = [...new Set(masterData.map(r => r.supplier).filter(Boolean))].sort();
             fill('dateFilter', dates, 'All Dates');
             fill('supplierFilter', suppliers, 'All Suppliers');

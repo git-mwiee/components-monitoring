@@ -209,6 +209,7 @@
         import { getFirestore, doc, collection, onSnapshot, getDoc, getDocs, query, where, writeBatch }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
         import { recordActivity, getActivityPage, loadGlobalScript } from "./activity.js";
+        import { sortReceivedNewestFirst } from "./receiving-utils.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBp-4LtvPoblVVhzJJJZdsmGVu6bUyixJY",
@@ -878,7 +879,7 @@
                 const res = await getDocs(q);
                 if (auth.currentUser?.uid !== listenerUserId) return;
                 const chunks = res.docs.map(d => d.data()).sort((a, b) => a.idx - b.idx);
-                recData = chunks.flatMap(c => c.rows);
+                recData = sortReceivedNewestFirst(chunks.flatMap(c => c.rows));
                 recVersion = meta.version;
                 if (meta.updatedAt) {
                     recUpdatedText = "Last updated: " + new Date(meta.updatedAt).toLocaleString();
@@ -934,7 +935,7 @@
                     values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
                 if (values.includes(prev)) sel.value = prev;
             };
-            const dates = [...new Set(recData.map(r => r.date).filter(Boolean))].reverse(); // pinakabago muna
+            const dates = [...new Set(recData.map(r => r.date).filter(Boolean))];
             const suppliers = [...new Set(recData.map(r => r.supplier).filter(Boolean))].sort();
             fill('recDateFilter', dates, 'All Dates');
             fill('recSupplierFilter', suppliers, 'All Suppliers');
