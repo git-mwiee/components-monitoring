@@ -17,9 +17,13 @@
                 <p id="headerSub" class="text-slate-600 text-sm">Search Sales Order or Item Code to check item status.</p>
                 <p id="lastUpdated" class="text-xs text-slate-400 mt-1"></p>
             </div>
-            <button id="adminToggleBtn" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-md font-semibold transition-all cursor-pointer">
-                Sign In
-            </button>
+            <div class="flex items-center gap-3">
+                <span id="signedInUser" class="hidden text-xs text-slate-600"></span>
+                <button id="logoutBtn" class="hidden text-xs text-rose-600 hover:underline font-semibold cursor-pointer">Logout</button>
+                <button id="adminToggleBtn" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-md font-semibold transition-all cursor-pointer">
+                    Sign In
+                </button>
+            </div>
         </div>
 
         <!-- LOGIN MODAL -->
@@ -48,11 +52,12 @@
         <!-- ADMIN SECTION (only shown after login) -->
         <div id="uploadSection" class="hidden mb-8 p-6 bg-slate-100 rounded-xl border border-slate-300">
             <div class="flex justify-between items-center mb-4">
-                <div>
-                    <h2 class="text-lg font-bold text-indigo-950">Data Upload & Feed Controls</h2>
-                    <p id="signedInUser" class="text-xs text-slate-500 mt-1"></p>
-                </div>
-                <button id="logoutBtn" class="text-xs text-rose-600 hover:underline font-semibold cursor-pointer">Logout</button>
+                <h2 class="text-lg font-bold text-indigo-950">Admin Data Upload & Feed Controls</h2>
+            </div>
+
+            <div id="uploadAccessNotice" class="hidden mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                <p id="uploadAccessMessage">You can view feeds. Data uploads are restricted to administrators.</p>
+                <button id="resendVerificationBtn" class="hidden mt-2 font-semibold underline">Resend admin verification email</button>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
@@ -200,7 +205,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged }
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, signOut, onAuthStateChanged }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
         import { getFirestore, doc, collection, onSnapshot, getDoc, getDocs, query, where, writeBatch }
             from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
@@ -218,6 +223,9 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
+        const ADMIN_EMAILS = new Set(['rabanalmaraa@gmail.com']);
+        const isAdminEmail = (email) => ADMIN_EMAILS.has(String(email || '').toLowerCase());
+        const isAdminUser = (user) => Boolean(user?.emailVerified && isAdminEmail(user.email));
 
         const CHUNK_SIZE = 500;
         const DISPLAY_LIMIT = 200;
@@ -368,9 +376,21 @@
             $('loginSubmit').disabled = true;
             try {
                 if (authMode === 'signup') {
-                    await createUserWithEmailAndPassword(auth, email, password);
+                    const credential = await createUserWithEmailAndPassword(auth, email, password);
                     trackActivity('signup', { page: 'monitoring' });
                     $('loginModal').classList.add('hidden');
+                    if (isAdminEmail(email)) {
+                        try {
+                            await sendEmailVerification(credential.user);
+                            showBanner("Account created. Verify your email, then sign out and back in to enable admin uploads.", "bg-amber-100 text-amber-800 border border-amber-300");
+                        } catch (verificationError) {
+                            console.error("Could not send admin verification email.", verificationError);
+                            showBanner("Account created, but the verification email could not be sent. Sign in and use the resend option.", "bg-rose-100 text-rose-800 border border-rose-300");
+                        }
+                    } else {
+                        showBanner("Account created. You have view-only access.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+                    }
+                    return;
                 } else {
                     await signInWithEmailAndPassword(auth, email, password);
                     $('loginModal').classList.add('hidden');
@@ -404,16 +424,35 @@
             }
         };
 
+        $('resendVerificationBtn').onclick = async () => {
+            try {
+                await sendEmailVerification(auth.currentUser);
+                $('uploadAccessMessage').textContent = "Verification email sent. Verify your email, then sign out and back in to enable admin uploads.";
+                $('resendVerificationBtn').classList.add('hidden');
+            } catch (error) {
+                console.error("Could not send admin verification email.", error);
+                showBanner("Could not send verification email. Please try again later.", "bg-rose-100 text-rose-800 border border-rose-300");
+            }
+        };
+
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 if (activeUserId && activeUserId !== user.uid) stopDataListeners();
                 activeUserId = user.uid;
                 $('authGate').classList.add('hidden');
                 $('authenticatedApp').classList.remove('hidden');
-                $('uploadSection').classList.remove('hidden');
+                const admin = isAdminUser(user);
+                $('uploadSection').classList.toggle('hidden', !admin);
+                $('uploadAccessNotice').classList.toggle('hidden', admin);
+                $('uploadAccessMessage').textContent = isAdminEmail(user.email) && !user.emailVerified
+                    ? "Verify your admin email to upload data. After verifying, sign out and sign back in."
+                    : "You can view feeds. Data uploads are restricted to administrators.";
+                $('resendVerificationBtn').classList.toggle('hidden', !isAdminEmail(user.email) || user.emailVerified);
                 $('adminToggleBtn').classList.add('hidden');
-                $('signedInUser').textContent = `Signed in as ${user.email || 'user'}`;
-                showBanner("Signed in. Feed data and uploads are available.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+                $('signedInUser').textContent = `${user.email || 'user'} (${admin ? 'Admin' : 'Viewer'})`;
+                $('signedInUser').classList.remove('hidden');
+                $('logoutBtn').classList.remove('hidden');
+                showBanner(admin ? "Signed in as admin. Data uploads are enabled." : "Signed in with view-only access.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
                 trackActivity('login', { page: 'monitoring' });
                 trackActivity('feed_access', { feeds: 'monitoring, receiving' });
                 startDataListeners();
@@ -423,7 +462,10 @@
                 $('authGate').classList.remove('hidden');
                 $('authenticatedApp').classList.add('hidden');
                 $('uploadSection').classList.add('hidden');
+                $('uploadAccessNotice').classList.add('hidden');
                 $('adminToggleBtn').classList.remove('hidden');
+                $('signedInUser').classList.add('hidden');
+                $('logoutBtn').classList.add('hidden');
                 $('statusBanner').classList.add('hidden');
                 activityEntries = [];
                 activityCursor = null;
@@ -563,6 +605,7 @@
 
         $('processBtn').onclick = async () => {
             if (!auth.currentUser) return showBanner("Please login first.", "bg-amber-100 text-amber-800 border border-amber-300");
+            if (!isAdminUser(auth.currentUser)) return showBanner("Only a verified administrator can upload data.", "bg-rose-100 text-rose-800 border border-rose-300");
 
             const lackingFile = $('lackingInput').files[0];
             const suppliedFile = $('suppliedInput').files[0];
@@ -656,6 +699,9 @@
 
         // Shared uploader: bagong chunks -> switch meta -> burahin ang luma
         async function uploadChunks({ rows, chunksCol, metaCol, onProgress }) {
+            if (!isAdminUser(auth.currentUser)) {
+                throw new Error("Only a verified administrator can upload data.");
+            }
             const version = String(Date.now());
             const totalChunks = Math.ceil(rows.length / CHUNK_SIZE);
             const previousMeta = await getDoc(doc(db, metaCol, "meta"));
