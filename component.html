@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Component Monitoring System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto bg-white p-6 md:p-8 rounded-xl shadow-md border border-slate-200">
+
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold text-indigo-900 mb-1">Component Monitoring System</h1>
+                <p class="text-slate-600 text-sm">Search Sales Order or Item Code to check item status.</p>
+                <p id="lastUpdated" class="text-xs text-slate-400 mt-1"></p>
+            </div>
+            <button id="adminToggleBtn" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-md font-semibold transition-all cursor-pointer">
+                Admin Login
+            </button>
+        </div>
+
+        <!-- LOGIN MODAL -->
+        <div id="loginModal" class="hidden fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4">
+            <div class="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full">
+                <h3 class="text-lg font-bold text-indigo-950 mb-3">Admin Login</h3>
+                <input type="email" id="adminEmail" placeholder="Email" class="w-full p-3 border border-slate-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <input type="password" id="adminPassword" placeholder="Password" class="w-full p-3 border border-slate-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <p id="loginError" class="hidden text-sm text-rose-600 mb-3"></p>
+                <div class="flex justify-end gap-2">
+                    <button id="loginCancel" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded-lg text-sm font-semibold cursor-pointer">Cancel</button>
+                    <button id="loginSubmit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold cursor-pointer">Login</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ADMIN SECTION (only shown after login) -->
+        <div id="uploadSection" class="hidden mb-8 p-6 bg-slate-100 rounded-xl border border-slate-300">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-indigo-950">Admin Upload & Feed Controls</h2>
+                <button id="logoutBtn" class="text-xs text-rose-600 hover:underline font-semibold cursor-pointer">Logout</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div class="p-5 border-2 border-dashed border-indigo-200 rounded-lg bg-white flex flex-col items-center">
+                    <label class="block font-semibold text-indigo-900 mb-2">1. Upload Lacking Excel File</label>
+                    <input type="file" id="lackingInput" accept=".xlsx, .xls" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-700 cursor-pointer">
+                </div>
+                <div class="p-5 border-2 border-dashed border-emerald-200 rounded-lg bg-emerald-50/50 flex flex-col items-center">
+                    <label class="block font-semibold text-emerald-900 mb-2">2. Upload Customer Supplied File</label>
+                    <input type="file" id="suppliedInput" accept=".xlsx, .xls" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
+                </div>
+            </div>
+            <div class="flex flex-wrap justify-center gap-4">
+                <button id="processBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-all text-lg cursor-pointer">
+                    Update & Feed Data
+                </button>
+            </div>
+        </div>
+
+        <!-- Banner -->
+        <div id="statusBanner" class="hidden p-4 mb-6 rounded-lg font-medium text-center"></div>
+
+        <!-- VIEWER SECTION -->
+        <div id="resultsSection">
+            <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                <div class="w-full md:w-1/2">
+                    <input type="text" id="searchInput" placeholder="Search Sales Order, Item Code, or Description..." class="w-full p-3 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="flex gap-2 items-center">
+                    <select id="statusFilter" class="p-3 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                        <option value="ALL">All Status</option>
+                        <option value="LACKING">LACKING Only</option>
+                        <option value="COMPLETE">COMPLETE Only</option>
+                    </select>
+                    <button id="downloadBtn" class="hidden bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 px-4 rounded-lg shadow-sm text-sm cursor-pointer">
+                        Download Excel
+                    </button>
+                </div>
+            </div>
+
+            <p id="rowCount" class="text-xs text-slate-500 mb-2"></p>
+
+            <div class="overflow-x-auto border border-slate-200 rounded-lg shadow-inner max-h-[650px]">
+                <table class="min-w-full divide-y divide-slate-200 text-sm text-left">
+                    <thead class="bg-slate-100 sticky top-0 font-semibold text-slate-700">
+                        <tr>
+                            <th class="p-3">SALES ORDER</th>
+                            <th class="p-3">ITEM #</th>
+                            <th class="p-3">ITEM CODE</th>
+                            <th class="p-3">PARTICULAR</th>
+                            <th class="p-3">QTY BOC</th>
+                            <th class="p-3">QTY RECEIVED</th>
+                            <th class="p-3">DIFFERENCE</th>
+                            <th class="p-3">STATUS</th>
+                            <th class="p-3">REMARKS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-200 bg-white">
+                        <tr><td colspan="9" class="p-6 text-center text-slate-400">Loading data...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+            from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+        import { getFirestore, doc, collection, onSnapshot, getDocs, query, where, writeBatch }
+            from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+        // =====================================================
+        // PALITAN ITO ng config mo galing Firebase Console
+        // (Project settings > Your apps > Web app > Config)
+        // =====================================================
+     const firebaseConfig = {
+        apiKey: "AIzaSyBp-4LtvPoblVVhzJJJZdsmGVu6bUyixJY",
+        authDomain: "components-monitoring.firebaseapp.com",
+        projectId: "components-monitoring",
+        storageBucket: "components-monitoring.firebasestorage.app",
+        messagingSenderId: "814355677243",
+        appId: "1:814355677243:web:3ed7549e3850b279c65c1e"
+    };
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const CHUNK_SIZE = 500;
+        const DISPLAY_LIMIT = 1000;
+        let masterGlobalData = [];
+        let currentVersion = null;
+
+        const $ = (id) => document.getElementById(id);
+        const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        // ---------- Banner ----------
+        function showBanner(message, classes) {
+            const b = $('statusBanner');
+            b.className = `p-4 mb-6 rounded-lg font-medium text-center ${classes}`;
+            b.textContent = message;
+            b.classList.remove('hidden');
+        }
+
+        // ---------- Admin auth ----------
+        $('adminToggleBtn').onclick = () => {
+            $('loginError').classList.add('hidden');
+            $('adminPassword').value = '';
+            $('loginModal').classList.remove('hidden');
+            $('adminEmail').focus();
+        };
+        $('loginCancel').onclick = () => $('loginModal').classList.add('hidden');
+        $('adminPassword').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginSubmit').click(); });
+
+        $('loginSubmit').onclick = async () => {
+            try {
+                await signInWithEmailAndPassword(auth, $('adminEmail').value.trim(), $('adminPassword').value);
+                $('loginModal').classList.add('hidden');
+            } catch (e) {
+                $('loginError').textContent = "Login failed. Check email/password.";
+                $('loginError').classList.remove('hidden');
+            }
+        };
+        $('logoutBtn').onclick = () => signOut(auth);
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                $('uploadSection').classList.remove('hidden');
+                $('adminToggleBtn').classList.add('hidden');
+                showBanner("Logged in as admin.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+            } else {
+                $('uploadSection').classList.add('hidden');
+                $('adminToggleBtn').classList.remove('hidden');
+                $('statusBanner').classList.add('hidden');
+            }
+        });
+
+        // ---------- Viewer: live updates ----------
+        // Nakikinig lang sa maliit na "meta" document. Kapag nagbago ang version, saka lang kukunin ang data.
+        onSnapshot(doc(db, "monitoring", "meta"), async (snap) => {
+            if (!snap.exists()) {
+                masterGlobalData = [];
+                $('tableBody').innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400">No data loaded yet.</td></tr>`;
+                return;
+            }
+            const meta = snap.data();
+            if (meta.version === currentVersion) return;
+            try {
+                const q = query(collection(db, "chunks"), where("version", "==", meta.version));
+                const res = await getDocs(q);
+                const chunks = res.docs.map(d => d.data()).sort((a, b) => a.idx - b.idx);
+                masterGlobalData = chunks.flatMap(c => c.rows);
+                currentVersion = meta.version;
+                if (meta.updatedAt) {
+                    $('lastUpdated').textContent = "Last updated: " + new Date(meta.updatedAt).toLocaleString();
+                }
+                $('downloadBtn').classList.toggle('hidden', masterGlobalData.length === 0);
+                filterData();
+            } catch (e) {
+                console.error(e);
+                $('tableBody').innerHTML = `<tr><td colspan="9" class="p-6 text-center text-rose-500">Failed to load data. Please refresh.</td></tr>`;
+            }
+        }, (err) => {
+            console.error(err);
+            $('tableBody').innerHTML = `<tr><td colspan="9" class="p-6 text-center text-rose-500">Cannot connect to database. Check Firebase config.</td></tr>`;
+        });
+
+        // ---------- Admin: process & upload ----------
+        $('processBtn').onclick = processMonitoring;
+
+        function readExcel(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                        resolve(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" }));
+                    } catch (err) { reject(err); }
+                };
+                reader.onerror = reject;
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function processMonitoring() {
+            if (!auth.currentUser) return showBanner("Please login first.", "bg-amber-100 text-amber-800 border border-amber-300");
+
+            const lackingFile = $('lackingInput').files[0];
+            const suppliedFile = $('suppliedInput').files[0];
+            if (!lackingFile || !suppliedFile) {
+                return showBanner("Please select both Excel files before updating.", "bg-amber-100 text-amber-800 border border-amber-300");
+            }
+
+            $('processBtn').disabled = true;
+            showBanner("Processing and uploading data...", "bg-blue-100 text-blue-800 border border-blue-300");
+
+            try {
+                const [lackingData, suppliedData] = await Promise.all([readExcel(lackingFile), readExcel(suppliedFile)]);
+
+                const pool = {};
+                suppliedData.forEach(row => {
+                    const so = String(row['SALES ORDER'] || '').trim().toUpperCase();
+                    const code = String(row['ITEM CODE'] || '').trim().toUpperCase();
+                    const qty = parseFloat(row['QTY RECEIVED']) || 0;
+                    if (so && code && code !== '-') {
+                        const key = `${so}|${code}`;
+                        pool[key] = (pool[key] || 0) + qty;
+                    }
+                });
+
+                lackingData.forEach(row => {
+                    const so = String(row['SALES ORDER'] || '').trim().toUpperCase();
+                    const code = String(row['ITEM CODE'] || '').trim().toUpperCase();
+                    const itemNum = String(row['ITEM #'] || '').trim();
+                    const particular = String(row['PARTICULAR'] || '').trim();
+                    const raw = row['QTY BOC'];
+                    const hasQty = raw !== undefined && raw !== '' && !isNaN(parseFloat(raw));
+                    const qtyBoc = hasQty ? parseFloat(raw) : 0;
+                    const hasInfo = (code && code !== '-') || itemNum !== '' || particular !== '' || (hasQty && qtyBoc > 0);
+
+                    if (!hasInfo) {
+                        row['QTY RECEIVED'] = ''; row['DIFFERENCE'] = ''; row['STATUS'] = '';
+                    } else {
+                        const key = `${so}|${code}`;
+                        const available = pool[key] || 0;
+                        if (available <= 0) {
+                            row['QTY RECEIVED'] = 0;
+                            row['DIFFERENCE'] = -qtyBoc;
+                            row['STATUS'] = 'LACKING';
+                        } else {
+                            const allocated = Math.min(qtyBoc, available);
+                            pool[key] = available - allocated;
+                            row['QTY RECEIVED'] = allocated;
+                            row['DIFFERENCE'] = allocated - qtyBoc;
+                            row['STATUS'] = (qtyBoc - allocated) <= 0 ? 'COMPLETE' : 'LACKING';
+                        }
+                    }
+                });
+
+                // Panatilihin lang ang 9 na columns (Firestore ayaw ng undefined values)
+                const cols = ['SALES ORDER','ITEM #','ITEM CODE','PARTICULAR','QTY BOC','QTY RECEIVED','DIFFERENCE','STATUS','REMARKS'];
+                const clean = lackingData.map(r => {
+                    const o = {};
+                    cols.forEach(c => { o[c] = (r[c] === undefined || r[c] === null) ? '' : r[c]; });
+                    return o;
+                });
+
+                const version = String(Date.now());
+
+                // 1) I-upload muna ang bagong chunks
+                const totalChunks = Math.ceil(clean.length / CHUNK_SIZE);
+                for (let i = 0; i < totalChunks; i++) {
+                    const batch = writeBatch(db);
+                    batch.set(doc(db, "chunks", `${version}_${i}`), {
+                        version, idx: i,
+                        rows: clean.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+                    });
+                    await batch.commit();
+                    showBanner(`Uploading... ${i + 1}/${totalChunks}`, "bg-blue-100 text-blue-800 border border-blue-300");
+                }
+
+                // 2) Saka i-switch ang meta (dito mag-a-auto update ang mga viewer)
+                const metaBatch = writeBatch(db);
+                metaBatch.set(doc(db, "monitoring", "meta"), {
+                    version, totalRows: clean.length, updatedAt: Date.now()
+                });
+                await metaBatch.commit();
+
+                // 3) Burahin ang lumang chunks
+                const old = await getDocs(collection(db, "chunks"));
+                const stale = old.docs.filter(d => d.data().version !== version);
+                for (let i = 0; i < stale.length; i += 400) {
+                    const b = writeBatch(db);
+                    stale.slice(i, i + 400).forEach(d => b.delete(d.ref));
+                    await b.commit();
+                }
+
+                showBanner(`Done! ${clean.length} rows uploaded. Viewers will see it automatically.`, "bg-emerald-100 text-emerald-800 border border-emerald-300");
+            } catch (err) {
+                console.error(err);
+                showBanner("An error occurred: " + (err.message || "check your files and try again."), "bg-rose-100 text-rose-800 border border-rose-300");
+            } finally {
+                $('processBtn').disabled = false;
+            }
+        }
+
+        // ---------- Table ----------
+        function renderTable(data) {
+            const tbody = $('tableBody');
+            if (!data || data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="9" class="p-6 text-center text-slate-400">No records found.</td></tr>`;
+                $('rowCount').textContent = '';
+                return;
+            }
+            const shown = data.slice(0, DISPLAY_LIMIT);
+            tbody.innerHTML = shown.map(row => {
+                const status = String(row['STATUS'] || '').trim().toUpperCase();
+                let badge = '';
+                if (status === 'COMPLETE') badge = `<span class="px-2.5 py-1 rounded text-xs bg-emerald-500 text-white font-bold">COMPLETE</span>`;
+                else if (status === 'LACKING') badge = `<span class="px-2.5 py-1 rounded text-xs bg-rose-500 text-white font-bold">LACKING</span>`;
+                return `<tr>
+                    <td class="p-3 border-b">${esc(row['SALES ORDER'])}</td>
+                    <td class="p-3 border-b">${esc(row['ITEM #'])}</td>
+                    <td class="p-3 border-b">${esc(row['ITEM CODE'])}</td>
+                    <td class="p-3 border-b">${esc(row['PARTICULAR'])}</td>
+                    <td class="p-3 border-b">${esc(row['QTY BOC'])}</td>
+                    <td class="p-3 border-b font-semibold text-indigo-700">${esc(row['QTY RECEIVED'])}</td>
+                    <td class="p-3 border-b">${esc(row['DIFFERENCE'])}</td>
+                    <td class="p-3 border-b">${badge}</td>
+                    <td class="p-3 border-b">${esc(row['REMARKS'])}</td>
+                </tr>`;
+            }).join('');
+            $('rowCount').textContent = data.length > DISPLAY_LIMIT
+                ? `Showing first ${DISPLAY_LIMIT} of ${data.length} rows. Use search to narrow down.`
+                : `${data.length} row(s)`;
+        }
+
+        function filterData() {
+            const q = $('searchInput').value.trim().toLowerCase();
+            const sf = $('statusFilter').value;
+            const filtered = masterGlobalData.filter(row => {
+                const matches =
+                    String(row['SALES ORDER'] || '').toLowerCase().includes(q) ||
+                    String(row['ITEM CODE'] || '').toLowerCase().includes(q) ||
+                    String(row['PARTICULAR'] || '').toLowerCase().includes(q) ||
+                    String(row['REMARKS'] || '').toLowerCase().includes(q);
+                const st = String(row['STATUS'] || '').trim().toUpperCase();
+                return matches && (sf === 'ALL' || st === sf);
+            });
+            renderTable(filtered);
+        }
+        $('searchInput').addEventListener('input', filterData);
+        $('statusFilter').addEventListener('change', filterData);
+
+        // ---------- Download formatted Excel ----------
+        $('downloadBtn').onclick = async () => {
+            if (!masterGlobalData.length) return;
+            const workbook = new ExcelJS.Workbook();
+            const ws = workbook.addWorksheet('Monitoring Report');
+            ws.columns = [
+                { header: 'SALES ORDER', key: 'so', width: 18 },
+                { header: 'ITEM #', key: 'itemNo', width: 10 },
+                { header: 'ITEM CODE', key: 'itemCode', width: 22 },
+                { header: 'PARTICULAR', key: 'particular', width: 50 },
+                { header: 'QTY BOC', key: 'qtyBoc', width: 12 },
+                { header: 'QTY RECEIVED', key: 'qtyRec', width: 15 },
+                { header: 'DIFFERENCE', key: 'diff', width: 14 },
+                { header: 'STATUS', key: 'status', width: 14 },
+                { header: 'REMARKS', key: 'remarks', width: 30 }
+            ];
+            ws.getRow(1).eachCell(cell => {
+                cell.font = { bold: true, name: 'Calibri', size: 11 };
+                cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                cell.border = { top:{style:'thin',color:{argb:'D3D3D3'}}, left:{style:'thin',color:{argb:'D3D3D3'}}, bottom:{style:'thin',color:{argb:'D3D3D3'}}, right:{style:'thin',color:{argb:'D3D3D3'}} };
+            });
+
+            masterGlobalData.forEach(d => {
+                const status = String(d['STATUS'] || '').trim().toUpperCase();
+                const remarks = String(d['REMARKS'] || '').trim();
+                const row = ws.addRow({
+                    so: d['SALES ORDER'] || '', itemNo: d['ITEM #'] || '', itemCode: d['ITEM CODE'] || '',
+                    particular: d['PARTICULAR'] || '', qtyBoc: d['QTY BOC'] ?? '',
+                    qtyRec: d['QTY RECEIVED'], diff: d['DIFFERENCE'], status, remarks
+                });
+                row.eachCell((cell, col) => {
+                    cell.font = { name: 'Calibri', size: 11 };
+                    cell.border = { top:{style:'thin',color:{argb:'E0E0E0'}}, left:{style:'thin',color:{argb:'E0E0E0'}}, bottom:{style:'thin',color:{argb:'E0E0E0'}}, right:{style:'thin',color:{argb:'E0E0E0'}} };
+                    if ([1,2,5,6,7].includes(col)) cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                });
+                const sc = row.getCell(8);
+                if (status === 'LACKING') {
+                    sc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFFF5B5B'} };
+                    sc.font = { color:{argb:'FF000000'}, bold:true, name:'Calibri' };
+                    sc.alignment = { horizontal:'center', vertical:'middle' };
+                } else if (status === 'COMPLETE') {
+                    sc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF66BB6A'} };
+                    sc.font = { color:{argb:'FFFFFFFF'}, bold:true, name:'Calibri' };
+                    sc.alignment = { horizontal:'center', vertical:'middle' };
+                }
+                if (remarks !== '') {
+                    const rc = row.getCell(9);
+                    rc.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFFFF9C4'} };
+                    rc.font = { bold:true, italic:true, name:'Calibri' };
+                }
+            });
+
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'Component_Monitoring_Report.xlsx'; a.click();
+            URL.revokeObjectURL(url);
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Components Receiving</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto bg-white p-6 md:p-8 rounded-xl shadow-md border border-slate-200">
+
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+            <div>
+                <h1 class="text-3xl font-bold text-indigo-900 mb-1">Components Receiving</h1>
+                <p class="text-slate-600 text-sm">Search Sales Order, Item Code, Project or Reference No. to check received components.</p>
+                <p id="lastUpdated" class="text-xs text-slate-400 mt-1"></p>
+            </div>
+            <div class="flex items-center gap-2">
+                <a href="index.html" class="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-800 px-3 py-2 rounded-md font-semibold transition-all">
+                    Component Monitoring
+                </a>
+                <button id="adminToggleBtn" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-md font-semibold transition-all cursor-pointer">
+                    Admin Login
+                </button>
+            </div>
+        </div>
+
+        <!-- LOGIN MODAL -->
+        <div id="loginModal" class="hidden fixed inset-0 bg-black/50 flex justify-center items-center z-50 p-4">
+            <div class="bg-white p-6 rounded-xl shadow-xl max-w-sm w-full">
+                <h3 class="text-lg font-bold text-indigo-950 mb-3">Admin Login</h3>
+                <input type="email" id="adminEmail" placeholder="Email" class="w-full p-3 border border-slate-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <input type="password" id="adminPassword" placeholder="Password" class="w-full p-3 border border-slate-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <p id="loginError" class="hidden text-sm text-rose-600 mb-3"></p>
+                <div class="flex justify-end gap-2">
+                    <button id="loginCancel" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded-lg text-sm font-semibold cursor-pointer">Cancel</button>
+                    <button id="loginSubmit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold cursor-pointer">Login</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ADMIN SECTION -->
+        <div id="uploadSection" class="hidden mb-8 p-6 bg-slate-100 rounded-xl border border-slate-300">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-indigo-950">Admin Upload</h2>
+                <button id="logoutBtn" class="text-xs text-rose-600 hover:underline font-semibold cursor-pointer">Logout</button>
+            </div>
+            <div class="p-5 border-2 border-dashed border-emerald-200 rounded-lg bg-emerald-50/50 flex flex-col items-center mb-6">
+                <label class="block font-semibold text-emerald-900 mb-2">Upload Components Receiving Excel File</label>
+                <input type="file" id="receivingInput" accept=".xlsx, .xls" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer">
+                <p class="text-xs text-slate-500 mt-2">Papalitan ng bagong upload ang buong laman ng page. I-upload ang kumpletong file.</p>
+            </div>
+            <div class="flex justify-center">
+                <button id="processBtn" class="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-all text-lg cursor-pointer">
+                    Update & Feed Data
+                </button>
+            </div>
+        </div>
+
+        <!-- Banner -->
+        <div id="statusBanner" class="hidden p-4 mb-6 rounded-lg font-medium text-center"></div>
+
+        <!-- VIEWER SECTION -->
+        <div>
+            <div class="flex flex-col lg:flex-row justify-between items-center mb-4 gap-4">
+                <div class="w-full lg:w-1/2">
+                    <input type="text" id="searchInput" placeholder="Search Sales Order, Item Code, Particular, Project, Reference No..." class="w-full p-3 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="flex flex-wrap gap-2 items-center">
+                    <select id="dateFilter" class="p-3 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                        <option value="ALL">All Dates</option>
+                    </select>
+                    <select id="supplierFilter" class="p-3 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                        <option value="ALL">All Suppliers</option>
+                    </select>
+                    <button id="downloadBtn" class="hidden bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 px-4 rounded-lg shadow-sm text-sm cursor-pointer">
+                        Download Excel
+                    </button>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3 mb-2">
+                <p id="rowCount" class="text-xs text-slate-500"></p>
+                <button id="showAllBtn" class="hidden text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-3 py-1 rounded cursor-pointer"></button>
+            </div>
+
+            <div class="overflow-x-auto border border-slate-200 rounded-lg shadow-inner max-h-[650px]">
+                <table class="min-w-full divide-y divide-slate-200 text-sm text-left">
+                    <thead class="bg-slate-100 sticky top-0 font-semibold text-slate-700">
+                        <tr>
+                            <th class="p-3 whitespace-nowrap">DATE RECEIVED</th>
+                            <th class="p-3">SUPPLIER</th>
+                            <th class="p-3">ITEM CODE</th>
+                            <th class="p-3">PARTICULAR</th>
+                            <th class="p-3 whitespace-nowrap">QTY RECEIVED</th>
+                            <th class="p-3">UOM</th>
+                            <th class="p-3 whitespace-nowrap">SALES ORDER</th>
+                            <th class="p-3">PROJECT</th>
+                            <th class="p-3 whitespace-nowrap">ITEM NO</th>
+                            <th class="p-3 whitespace-nowrap">REFERENCE NO.</th>
+                            <th class="p-3 whitespace-nowrap">ITEM REMARKS</th>
+                            <th class="p-3 whitespace-nowrap">GENERAL REMARKS</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-slate-200 bg-white">
+                        <tr><td colspan="12" class="p-6 text-center text-slate-400">Loading data...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+            from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+        import { getFirestore, doc, collection, onSnapshot, getDocs, query, where, writeBatch }
+            from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBp-4LtvPoblVVhzJJJZdsmGVu6bUyixJY",
+            authDomain: "components-monitoring.firebaseapp.com",
+            projectId: "components-monitoring",
+            storageBucket: "components-monitoring.firebasestorage.app",
+            messagingSenderId: "814355677243",
+            appId: "1:814355677243:web:3ed7549e3850b279c65c1e"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const CHUNK_SIZE = 500;
+        const DISPLAY_LIMIT = 1000;
+        let masterData = [];
+        let currentVersion = null;
+        let showAll = false;
+
+        const $ = (id) => document.getElementById(id);
+        const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        function showBanner(message, classes) {
+            const b = $('statusBanner');
+            b.className = `p-4 mb-6 rounded-lg font-medium text-center ${classes}`;
+            b.textContent = message;
+            b.classList.remove('hidden');
+        }
+
+        // ---------- Admin auth ----------
+        $('adminToggleBtn').onclick = () => {
+            $('loginError').classList.add('hidden');
+            $('adminPassword').value = '';
+            $('loginModal').classList.remove('hidden');
+            $('adminEmail').focus();
+        };
+        $('loginCancel').onclick = () => $('loginModal').classList.add('hidden');
+        $('adminPassword').addEventListener('keydown', e => { if (e.key === 'Enter') $('loginSubmit').click(); });
+
+        $('loginSubmit').onclick = async () => {
+            try {
+                await signInWithEmailAndPassword(auth, $('adminEmail').value.trim(), $('adminPassword').value);
+                $('loginModal').classList.add('hidden');
+            } catch (e) {
+                $('loginError').textContent = "Login failed. Check email/password.";
+                $('loginError').classList.remove('hidden');
+            }
+        };
+        $('logoutBtn').onclick = () => signOut(auth);
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                $('uploadSection').classList.remove('hidden');
+                $('adminToggleBtn').classList.add('hidden');
+                showBanner("Logged in as admin.", "bg-emerald-100 text-emerald-800 border border-emerald-300");
+            } else {
+                $('uploadSection').classList.add('hidden');
+                $('adminToggleBtn').classList.remove('hidden');
+                $('statusBanner').classList.add('hidden');
+            }
+        });
+
+        // ---------- Viewer: live updates ----------
+        onSnapshot(doc(db, "receiving", "meta"), async (snap) => {
+            if (!snap.exists()) {
+                masterData = [];
+                $('tableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-slate-400">No data loaded yet.</td></tr>`;
+                return;
+            }
+            const meta = snap.data();
+            if (meta.version === currentVersion) return;
+            try {
+                const q = query(collection(db, "receiving_chunks"), where("version", "==", meta.version));
+                const res = await getDocs(q);
+                const chunks = res.docs.map(d => d.data()).sort((a, b) => a.idx - b.idx);
+                masterData = chunks.flatMap(c => c.rows);
+                currentVersion = meta.version;
+                if (meta.updatedAt) {
+                    $('lastUpdated').textContent = "Last updated: " + new Date(meta.updatedAt).toLocaleString();
+                }
+                $('downloadBtn').classList.toggle('hidden', masterData.length === 0);
+                buildFilters();
+                filterData();
+            } catch (e) {
+                console.error(e);
+                $('tableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-rose-500">Failed to load data. Please refresh.</td></tr>`;
+            }
+        }, (err) => {
+            console.error(err);
+            $('tableBody').innerHTML = `<tr><td colspan="12" class="p-6 text-center text-rose-500">Cannot connect to database. Check Firebase config.</td></tr>`;
+        });
+
+        // ---------- Excel reading ----------
+        function readExcel(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                        // raw:false = kinukuha ang laman ayon sa itsura sa Excel (hal. "05-Nov-26")
+                        resolve(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false }));
+                    } catch (err) { reject(err); }
+                };
+                reader.onerror = reject;
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        // Pinapayagan ang bahagyang pagkakaiba sa pangalan ng column header
+        const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+        const pick = (m, aliases) => {
+            for (const a of aliases) {
+                if (m[a] !== undefined && String(m[a]).trim() !== '') return String(m[a]).trim();
+            }
+            return '';
+        };
+        function mapRow(row) {
+            const m = {};
+            for (const k in row) m[norm(k)] = row[k];
+            return {
+                date:           pick(m, ['DATE RECEIVED', 'DATE RECEIVE', 'DATE']),
+                supplier:       pick(m, ['SUPPLIER']),
+                itemCode:       pick(m, ['ITEM CODE']),
+                particular:     pick(m, ['PARTICULAR', 'PARTICULARS', 'DESCRIPTION']),
+                qty:            pick(m, ['QTY RECEIVED', 'QTY RECEIVE', 'QTY']),
+                uom:            pick(m, ['UOM']),
+                salesOrder:     pick(m, ['SALES ORDER']),
+                project:        pick(m, ['PROJECT']),
+                itemNo:         pick(m, ['ITEM NO', 'ITEM NO.', 'ITEM #']),
+                refNo:          pick(m, ['REFERENCE NO.', 'REFERENCE NO', 'REFERENCE']),
+                itemRemarks:    pick(m, ['ITEM REMARKS']),
+                generalRemarks: pick(m, ['GENERAL REMARKS'])
+            };
+        }
+
+        // ---------- Admin: upload ----------
+        $('processBtn').onclick = async () => {
+            if (!auth.currentUser) return showBanner("Please login first.", "bg-amber-100 text-amber-800 border border-amber-300");
+            const file = $('receivingInput').files[0];
+            if (!file) return showBanner("Please select the Excel file first.", "bg-amber-100 text-amber-800 border border-amber-300");
+
+            $('processBtn').disabled = true;
+            showBanner("Processing and uploading data...", "bg-blue-100 text-blue-800 border border-blue-300");
+
+            try {
+                const raw = await readExcel(file);
+                const rows = raw.map(mapRow).filter(r => r.itemCode || r.particular || r.salesOrder || r.qty);
+
+                if (rows.length === 0) {
+                    throw new Error("Walang nabasang rows. Check kung nasa unang row ang column headers.");
+                }
+
+                const version = String(Date.now());
+                const totalChunks = Math.ceil(rows.length / CHUNK_SIZE);
+
+                // 1) bagong chunks muna
+                for (let i = 0; i < totalChunks; i++) {
+                    const batch = writeBatch(db);
+                    batch.set(doc(db, "receiving_chunks", `${version}_${i}`), {
+                        version, idx: i,
+                        rows: rows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
+                    });
+                    await batch.commit();
+                    showBanner(`Uploading... ${i + 1}/${totalChunks}`, "bg-blue-100 text-blue-800 border border-blue-300");
+                }
+
+                // 2) i-switch ang meta (dito mag-a-auto update ang viewers)
+                const metaBatch = writeBatch(db);
+                metaBatch.set(doc(db, "receiving", "meta"), { version, totalRows: rows.length, updatedAt: Date.now() });
+                await metaBatch.commit();
+
+                // 3) burahin ang lumang chunks
+                const old = await getDocs(collection(db, "receiving_chunks"));
+                const stale = old.docs.filter(d => d.data().version !== version);
+                for (let i = 0; i < stale.length; i += 400) {
+                    const b = writeBatch(db);
+                    stale.slice(i, i + 400).forEach(d => b.delete(d.ref));
+                    await b.commit();
+                }
+
+                showBanner(`Done! ${rows.length} rows uploaded. Viewers will see it automatically.`, "bg-emerald-100 text-emerald-800 border border-emerald-300");
+            } catch (err) {
+                console.error(err);
+                showBanner("An error occurred: " + (err.message || "check your file and try again."), "bg-rose-100 text-rose-800 border border-rose-300");
+            } finally {
+                $('processBtn').disabled = false;
+            }
+        };
+
+        // ---------- Filters ----------
+        function buildFilters() {
+            const fill = (selectId, values, allLabel) => {
+                const sel = $(selectId);
+                const prev = sel.value;
+                sel.innerHTML = `<option value="ALL">${allLabel}</option>` +
+                    values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+                if (values.includes(prev)) sel.value = prev;
+            };
+            // pinakabago muna sa dates (ayon sa pagkakasunod sa Excel)
+            const dates = [...new Set(masterData.map(r => r.date).filter(Boolean))].reverse();
+            const suppliers = [...new Set(masterData.map(r => r.supplier).filter(Boolean))].sort();
+            fill('dateFilter', dates, 'All Dates');
+            fill('supplierFilter', suppliers, 'All Suppliers');
+        }
+
+        // ---------- Table ----------
+        function renderTable(data) {
+            const tbody = $('tableBody');
+            const btn = $('showAllBtn');
+            if (!data || data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="12" class="p-6 text-center text-slate-400">No records found.</td></tr>`;
+                $('rowCount').textContent = '';
+                btn.classList.add('hidden');
+                return;
+            }
+            const shown = showAll ? data : data.slice(0, DISPLAY_LIMIT);
+            tbody.innerHTML = shown.map(r => `<tr>
+                <td class="p-3 border-b whitespace-nowrap">${esc(r.date)}</td>
+                <td class="p-3 border-b">${esc(r.supplier)}</td>
+                <td class="p-3 border-b font-semibold">${esc(r.itemCode)}</td>
+                <td class="p-3 border-b">${esc(r.particular)}</td>
+                <td class="p-3 border-b font-semibold text-indigo-700 text-center">${esc(r.qty)}</td>
+                <td class="p-3 border-b">${esc(r.uom)}</td>
+                <td class="p-3 border-b whitespace-nowrap">${esc(r.salesOrder)}</td>
+                <td class="p-3 border-b">${esc(r.project)}</td>
+                <td class="p-3 border-b text-center">${esc(r.itemNo)}</td>
+                <td class="p-3 border-b whitespace-nowrap">${esc(r.refNo)}</td>
+                <td class="p-3 border-b">${esc(r.itemRemarks)}</td>
+                <td class="p-3 border-b">${esc(r.generalRemarks)}</td>
+            </tr>`).join('');
+
+            if (data.length > DISPLAY_LIMIT) {
+                $('rowCount').textContent = showAll
+                    ? `Showing all ${data.length} rows.`
+                    : `Showing first ${DISPLAY_LIMIT} of ${data.length} rows.`;
+                btn.textContent = showAll ? 'Show Less' : `Show All (${data.length})`;
+                btn.classList.remove('hidden');
+            } else {
+                $('rowCount').textContent = `${data.length} row(s)`;
+                btn.classList.add('hidden');
+            }
+        }
+
+        function filterData() {
+            const q = $('searchInput').value.trim().toLowerCase();
+            const df = $('dateFilter').value;
+            const sf = $('supplierFilter').value;
+            const filtered = masterData.filter(r => {
+                if (df !== 'ALL' && r.date !== df) return false;
+                if (sf !== 'ALL' && r.supplier !== sf) return false;
+                if (!q) return true;
+                return [r.salesOrder, r.itemCode, r.particular, r.project, r.refNo, r.supplier, r.itemRemarks, r.generalRemarks]
+                    .some(v => String(v || '').toLowerCase().includes(q));
+            });
+            renderTable(filtered);
+        }
+        $('searchInput').addEventListener('input', filterData);
+        $('dateFilter').addEventListener('change', filterData);
+        $('supplierFilter').addEventListener('change', filterData);
+        $('showAllBtn').onclick = () => { showAll = !showAll; filterData(); };
+
+        // ---------- Download ----------
+        $('downloadBtn').onclick = () => {
+            if (!masterData.length) return;
+            const header = ['DATE RECEIVED','SUPPLIER','ITEM CODE','PARTICULAR','QTY RECEIVED','UOM','SALES ORDER','PROJECT','ITEM NO','REFERENCE NO.','ITEM REMARKS','GENERAL REMARKS'];
+            const body = masterData.map(r => [r.date, r.supplier, r.itemCode, r.particular, r.qty, r.uom, r.salesOrder, r.project, r.itemNo, r.refNo, r.itemRemarks, r.generalRemarks]);
+            const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
+            ws['!cols'] = [14,22,18,45,13,8,16,30,9,16,20,20].map(w => ({ wch: w }));
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Components Receiving');
+            XLSX.writeFile(wb, 'Components_Receiving.xlsx');
+        };
+    </script>
+</body>
+</html>
